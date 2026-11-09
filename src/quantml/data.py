@@ -43,8 +43,11 @@ def load_prices(
     ValueError
         If ``tickers`` is empty, or no data is returned for any ticker.
 
-    Notes
+    Warns
     -----
-    Tickers that return no data are dropped with a warning.  # ← 换成你在 DEVLOG 里定的规则
+    UserWarning
+        If some tickers return no data at all. Those tickers are dropped
+        and listed in the warning message. Tickers with only partial
+        history (e.g. listed later) are kept.
     """
     raise NotImplementedError
