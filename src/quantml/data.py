@@ -41,7 +41,7 @@ def load_prices(
     Raises
     ------
     ValueError
-        If ``tickers`` is empty, or no data is returned for any ticker.
+        If ``tickers`` is empty, or none of the tickers returns any data.
 
     Warns
     -----

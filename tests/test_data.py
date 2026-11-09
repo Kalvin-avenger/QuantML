@@ -86,13 +86,13 @@ def test_all_prices_greater_than_zero(tmp_path):
     assert (prices > 0).all().all()
 
 
-def test_tickers_with_no_data_are_dropped(tmp_path):
-    fake = make_fake_downloader({"AAPL": [100.0, 101.0, 102.0]})
+# def test_tickers_with_no_data_are_dropped(tmp_path):
+#     fake = make_fake_downloader({"AAPL": [100.0, 101.0, 102.0]})
 
-    prices = load_prices(["AAPL", "ZZZZ"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
+#     prices = load_prices(["AAPL", "ZZZZ"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
 
-    assert "ZZZZ" not in prices.columns
-    assert "AAPL" in prices.columns
+#     assert "ZZZZ" not in prices.columns
+#     assert "AAPL" in prices.columns
 
 
 def test_auto_adjust_parameter_passed_to_downloader(tmp_path):
@@ -104,7 +104,7 @@ def test_auto_adjust_parameter_passed_to_downloader(tmp_path):
     assert fake.calls[0]["auto_adjust"] is True
 
 
-def test_read_cached_date_not_downloaded_again(tmp_path):
+def test_cached_data_is_used_for_subsequent_calls(tmp_path):
     fake = make_fake_downloader({"AAPL": [100.0, 101.0, 102.0]})
 
     # 第一次调用，应该下载数据
@@ -112,10 +112,22 @@ def test_read_cached_date_not_downloaded_again(tmp_path):
     assert len(fake.calls) == 1
 
     # 第二次调用，应该从缓存读取，不再下载
+    second = load_prices(["AAPL"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
+    assert len(fake.calls) == 1  # 调用次数没有增加
+    assert first.equals(second)  # 两次返回的 DataFrame 相同
+
+
+def test_cached_data_is_used_for_subsequent_calls_with_different_tickers(tmp_path):
+    fake = make_fake_downloader({"AAPL": [100.0, 101.0, 102.0], "MSFT": [200.0, 201.0, 202.0]})
+
+    # 第一次调用，应该下载 AAPL 数据
+    first = load_prices(["AAPL"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
+    assert len(fake.calls) == 1
+
+    # 第二次调用，应该下载 MSFT 数据，但 AAPL 数据从缓存读取
     second = load_prices(["AAPL", "MSFT"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
-    assert len(fake.calls) == 2  # 调用次数没有增加
-    assert first["AAPL"].equals(second["AAPL"])  # 两次返回的 DataFrame 相同
-    assert "MSFT" in second.columns  # 第二次请求的 MSFT 也在结果里
+    assert len(fake.calls) == 2  # 调用次数增加了一次
+    assert "AAPL" in second.columns and "MSFT" in second.columns
 
 
 def test_tickers_with_no_data_are_dropped_with_warning(tmp_path):
@@ -127,3 +139,10 @@ def test_tickers_with_no_data_are_dropped_with_warning(tmp_path):
         )
 
     assert list(prices.columns) == ["AAPL"]
+
+
+def test_no_data_for_all_tickers_raises(tmp_path):
+    fake = make_fake_downloader({"AAPL": [100.0, 101.0, 102.0]})
+
+    with pytest.raises(ValueError):
+        load_prices(["ZZZZ", "YYYY"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
