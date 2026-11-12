@@ -146,3 +146,13 @@ def test_no_data_for_all_tickers_raises(tmp_path):
 
     with pytest.raises(ValueError):
         load_prices(["ZZZZ", "YYYY"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
+
+
+def test_end_date_is_exclusive(tmp_path):
+    fake = make_fake_downloader({"AAPL": [100.0, 101.0, 102.0]})
+
+    prices = load_prices(
+        ["AAPL"], start="2024-01-01", end="2024-01-04", cache_dir=tmp_path, downloader=fake
+    )
+
+    assert list(prices.index) == list(pd.to_datetime(["2024-01-02", "2024-01-03"]))
