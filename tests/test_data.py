@@ -4,8 +4,12 @@ import pytest
 from quantml.data import load_prices
 
 
-def make_fake_downloader(prices):
-    """造一个假的 yf.download。prices 形如 {"AAPL": [100.0, 101.0], ...}"""
+def make_fake_downloader(prices, end_date=None):
+    """造一个假的 yf.download。prices 形如 {"AAPL": [100.0, 101.0], ...}
+
+    end_date 为 None 时，日期从 2024-01-02 开始；否则日期以 end_date 结尾，
+    用来模拟"数据一直延续到今天"的情况。
+    """
     calls = []  # 记录每一次调用，测试里用来检查"调用了几次、传了什么"
 
     def fake_download(tickers, start=None, end=None, **kwargs):
@@ -18,7 +22,10 @@ def make_fake_downloader(prices):
 
         # 3) 造日期：用价格列表的长度决定有几天，bdate_range 只取工作日
         n_days = len(next(iter(prices.values())))
-        dates = pd.bdate_range("2024-01-02", periods=n_days)
+        if end_date is None:
+            dates = pd.bdate_range("2024-01-02", periods=n_days)
+        else:
+            dates = pd.bdate_range(end=end_date, periods=n_days)
 
         # 4) 造和 yfinance 一样的两层列名：(字段, 股票代码)
         #    请对照你在第 ① 步看到的 df.columns 检查这里是否一致
@@ -86,15 +93,6 @@ def test_all_prices_greater_than_zero(tmp_path):
     assert (prices > 0).all().all()
 
 
-# def test_tickers_with_no_data_are_dropped(tmp_path):
-#     fake = make_fake_downloader({"AAPL": [100.0, 101.0, 102.0]})
-
-#     prices = load_prices(["AAPL", "ZZZZ"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
-
-#     assert "ZZZZ" not in prices.columns
-#     assert "AAPL" in prices.columns
-
-
 def test_auto_adjust_parameter_passed_to_downloader(tmp_path):
     fake = make_fake_downloader({"AAPL": [100.0, 101.0, 102.0]})
 
@@ -114,7 +112,7 @@ def test_cached_data_is_used_for_subsequent_calls(tmp_path):
     # 第二次调用，应该从缓存读取，不再下载
     second = load_prices(["AAPL"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
     assert len(fake.calls) == 1  # 调用次数没有增加
-    assert first.equals(second)  # 两次返回的 DataFrame 相同
+    pd.testing.assert_frame_equal(first, second)  # 两次返回的 DataFrame 相同
 
 
 def test_cached_data_is_used_for_subsequent_calls_with_different_tickers(tmp_path):
@@ -127,7 +125,9 @@ def test_cached_data_is_used_for_subsequent_calls_with_different_tickers(tmp_pat
     # 第二次调用，应该下载 MSFT 数据，但 AAPL 数据从缓存读取
     second = load_prices(["AAPL", "MSFT"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
     assert len(fake.calls) == 2  # 调用次数增加了一次
-    assert "AAPL" in second.columns and "MSFT" in second.columns
+    assert fake.calls[1]["tickers"] == ["MSFT"]  # 第二次只下载了缺少的 MSFT
+    assert list(second.columns) == ["AAPL", "MSFT"]
+    pd.testing.assert_series_equal(first["AAPL"], second["AAPL"])  # AAPL 来自缓存，前后一致
 
 
 def test_tickers_with_no_data_are_dropped_with_warning(tmp_path):
@@ -156,3 +156,43 @@ def test_end_date_is_exclusive(tmp_path):
     )
 
     assert list(prices.index) == list(pd.to_datetime(["2024-01-02", "2024-01-03"]))
+
+
+def test_duplicate_tickers_are_ignored(tmp_path):
+    fake = make_fake_downloader({"AAPL": [100.0, 101.0, 102.0]})
+
+    prices = load_prices(["AAPL", "AAPL"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
+
+    assert list(prices.columns) == ["AAPL"]
+
+
+# 下面三条测试的假数据一直延续到今天。如果今天是周末，bdate_range 本来就不会
+# 生成今天的日期，测试会直接通过，这是正常的。
+def test_today_is_excluded_when_end_is_none(tmp_path):
+    today = pd.Timestamp.today().normalize()
+    fake = make_fake_downloader({"AAPL": [100.0, 101.0, 102.0]}, end_date=today)
+
+    prices = load_prices(["AAPL"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
+
+    assert prices.index.max() < today
+
+
+def test_today_is_excluded_when_end_is_in_the_future(tmp_path):
+    today = pd.Timestamp.today().normalize()
+    fake = make_fake_downloader({"AAPL": [100.0, 101.0, 102.0]}, end_date=today)
+
+    prices = load_prices(
+        ["AAPL"], start="2024-01-01", end="2100-01-01", cache_dir=tmp_path, downloader=fake
+    )
+
+    assert prices.index.max() < today
+
+
+def test_today_is_never_written_to_cache(tmp_path):
+    today = pd.Timestamp.today().normalize()
+    fake = make_fake_downloader({"AAPL": [100.0, 101.0, 102.0]}, end_date=today)
+
+    load_prices(["AAPL"], start="2024-01-01", cache_dir=tmp_path, downloader=fake)
+
+    cached = pd.read_csv(tmp_path / "AAPL.csv", index_col="date", parse_dates=True)
+    assert cached.index.max() < today
